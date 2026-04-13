@@ -47,11 +47,15 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
   const logMessage = `[${timestamp}] ${req.method} ${req.path}`;
-  const logFile = path.join('./logs', `debug-${new Date().toISOString().split('T')[0]}.log`);
-  if (!fs.existsSync('./logs')) {
-    fs.mkdirSync('./logs', { recursive: true });
+  if (!isProduction) {
+    const logFile = path.join('./logs', `debug-${new Date().toISOString().split('T')[0]}.log`);
+    if (!fs.existsSync('./logs')) {
+      fs.mkdirSync('./logs', { recursive: true });
+    }
+    fs.appendFileSync(logFile, logMessage + '\n');
+  } else {
+    console.log(logMessage);
   }
-  fs.appendFileSync(logFile, logMessage + '\n');
   next();
 });
 
@@ -1367,24 +1371,45 @@ If you have any questions, please reach out!`;
 
 const projectHistoryFile = './data/project-history.json';
 
-// Ensure data directory exists and initialize project history file
-if (!fs.existsSync('./data')) {
-  fs.mkdirSync('./data', { recursive: true });
+// Ensure data directory exists and initialize project history file (dev only — Vercel fs is read-only)
+if (!isProduction) {
+  if (!fs.existsSync('./data')) {
+    fs.mkdirSync('./data', { recursive: true });
+  }
+
+  if (!fs.existsSync(projectHistoryFile)) {
+    fs.writeFileSync(projectHistoryFile, JSON.stringify({
+      projects: [],
+      metadata: {
+        version: '1.0',
+        last_updated: null,
+        total_projects: 0
+      }
+    }, null, 2));
+  }
 }
 
-if (!fs.existsSync(projectHistoryFile)) {
-  fs.writeFileSync(projectHistoryFile, JSON.stringify({
-    projects: [],
-    metadata: {
-      version: '1.0',
-      last_updated: null,
-      total_projects: 0
-    }
-  }, null, 2));
+// In-memory project history for production (Vercel read-only fs)
+const _memoryProjectHistory = { projects: [], metadata: { version: '1.0', last_updated: null, total_projects: 0 } };
+
+function readProjectHistory() {
+  if (isProduction) return JSON.parse(JSON.stringify(_memoryProjectHistory));
+  if (!fs.existsSync(projectHistoryFile)) return { projects: [], metadata: { version: '1.0', last_updated: null, total_projects: 0 } };
+  return JSON.parse(fs.readFileSync(projectHistoryFile, 'utf8'));
+}
+
+function writeProjectHistory(data) {
+  if (isProduction) {
+    _memoryProjectHistory.projects = data.projects;
+    _memoryProjectHistory.metadata = data.metadata;
+    return;
+  }
+  fs.writeFileSync(projectHistoryFile, JSON.stringify(data, null, 2));
 }
 
 // Migrate existing projects to add features_configured field
 function migrateProjectsSchema() {
+  if (isProduction) return; // no persistent data to migrate in production
   if (!fs.existsSync(projectHistoryFile)) return;
 
   try {
@@ -1421,7 +1446,7 @@ app.post('/api/projects/save', (req, res) => {
     const { setupData } = req.body;
 
     // Read existing history
-    let history = JSON.parse(fs.readFileSync(projectHistoryFile, 'utf8'));
+    let history = readProjectHistory();
 
     // Create project record
     const { v4: uuidv4 } = require('uuid');
@@ -1451,8 +1476,8 @@ app.post('/api/projects/save', (req, res) => {
     history.metadata.last_updated = new Date().toISOString();
     history.metadata.total_projects = history.projects.length;
 
-    // Write back to file
-    fs.writeFileSync(projectHistoryFile, JSON.stringify(history, null, 2));
+    // Write back to file / memory store
+    writeProjectHistory(history);
 
     logger.info('PROJECTS', `Project saved: ${projectRecord.client_info.name} (${projectRecord.id})`);
 
@@ -1472,14 +1497,7 @@ app.post('/api/projects/save', (req, res) => {
 // Get all projects
 app.get('/api/projects', (req, res) => {
   try {
-    if (!fs.existsSync(projectHistoryFile)) {
-      return res.json({
-        projects: [],
-        metadata: { total_projects: 0 }
-      });
-    }
-
-    const data = JSON.parse(fs.readFileSync(projectHistoryFile, 'utf8'));
+    const data = readProjectHistory();
     res.json(data);
   } catch (error) {
     logger.error('PROJECTS', 'Failed to load projects', error.message);
@@ -1493,11 +1511,7 @@ app.get('/api/projects', (req, res) => {
 // Get single project by ID
 app.get('/api/projects/:projectId', (req, res) => {
   try {
-    if (!fs.existsSync(projectHistoryFile)) {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-
-    const data = JSON.parse(fs.readFileSync(projectHistoryFile, 'utf8'));
+    const data = readProjectHistory();
     const project = data.projects.find(p => p.id === req.params.projectId);
 
     if (!project) {
@@ -1520,11 +1534,7 @@ app.put('/api/projects/:projectId', (req, res) => {
     const { projectId } = req.params;
     const { updates } = req.body;
 
-    if (!fs.existsSync(projectHistoryFile)) {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-
-    const data = JSON.parse(fs.readFileSync(projectHistoryFile, 'utf8'));
+    const data = readProjectHistory();
     const projectIndex = data.projects.findIndex(p => p.id === projectId);
 
     if (projectIndex === -1) {
@@ -1567,7 +1577,7 @@ app.put('/api/projects/:projectId', (req, res) => {
     // Save back
     data.projects[projectIndex] = project;
     data.metadata.last_updated = new Date().toISOString();
-    fs.writeFileSync(projectHistoryFile, JSON.stringify(data, null, 2));
+    writeProjectHistory(data);
 
     logger.info('PROJECTS', `Project updated: ${project.client_info.name} (${projectId})`);
 
@@ -1589,11 +1599,7 @@ app.delete('/api/projects/:projectId', (req, res) => {
   try {
     const { projectId } = req.params;
 
-    if (!fs.existsSync(projectHistoryFile)) {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-
-    const data = JSON.parse(fs.readFileSync(projectHistoryFile, 'utf8'));
+    const data = readProjectHistory();
     const projectIndex = data.projects.findIndex(p => p.id === projectId);
 
     if (projectIndex === -1) {
@@ -1609,8 +1615,8 @@ app.delete('/api/projects/:projectId', (req, res) => {
     data.metadata.last_updated = new Date().toISOString();
     data.metadata.total_projects = data.projects.length;
 
-    // Save updated file
-    fs.writeFileSync(projectHistoryFile, JSON.stringify(data, null, 2));
+    // Save updated history
+    writeProjectHistory(data);
 
     logger.info('PROJECTS', `Project deleted: ${deletedProject.client_info.name} (${projectId})`);
 
