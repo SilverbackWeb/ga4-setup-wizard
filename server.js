@@ -14,6 +14,16 @@ const { google } = require('googleapis');
 // Initialize Express app
 const app = express();
 const PORT = process.env.PORT || 5000;
+const isProduction = process.env.NODE_ENV === 'production';
+
+// In production (Vercel), filesystem is read-only — silently swallow log file writes
+if (isProduction) {
+  const _origAppend = fs.appendFileSync.bind(fs);
+  fs.appendFileSync = (filePath, data, options) => {
+    if (typeof filePath === 'string' && (filePath.includes('logs') || filePath.includes('sessions'))) return;
+    try { _origAppend(filePath, data, options); } catch(e) {}
+  };
+}
 
 // Pre-initialize Google API services to ensure they're properly loaded
 let googleServicesReady = false;
@@ -45,15 +55,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// Session store for OAuth tokens (file-based for persistence)
+// Session store: in-memory for production (Vercel serverless), file-based for development
+const _memorySessionStore = new Map();
 const sessionsDir = './sessions';
-if (!fs.existsSync(sessionsDir)) {
+if (!isProduction && !fs.existsSync(sessionsDir)) {
   fs.mkdirSync(sessionsDir, { recursive: true });
 }
 
-// Session management functions
 const sessions = {
   get: (sessionId) => {
+    if (isProduction) return _memorySessionStore.get(sessionId) || null;
     try {
       const sessionPath = path.join(sessionsDir, `${sessionId}.json`);
       if (fs.existsSync(sessionPath)) {
@@ -66,6 +77,7 @@ const sessions = {
     return null;
   },
   set: (sessionId, data) => {
+    if (isProduction) { _memorySessionStore.set(sessionId, data); return; }
     try {
       const sessionPath = path.join(sessionsDir, `${sessionId}.json`);
       fs.writeFileSync(sessionPath, JSON.stringify(data, null, 2));
@@ -75,9 +87,9 @@ const sessions = {
   }
 };
 
-// Create logs directory if it doesn't exist
+// Create logs directory if it doesn't exist (dev only — Vercel filesystem is read-only)
 const logsDir = process.env.LOG_DIR || './logs';
-if (!fs.existsSync(logsDir)) {
+if (!isProduction && !fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
 
@@ -1987,11 +1999,13 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  logger.info('SERVER', `GA4 Setup Wizard running on http://localhost:${PORT}`);
-  logger.info('SERVER', `Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info('SERVER', `Debug mode: ${process.env.DEBUG === 'true' ? 'enabled' : 'disabled'}`);
-});
+// Start server (local dev only — Vercel uses module.exports = app)
+if (!isProduction) {
+  app.listen(PORT, () => {
+    logger.info('SERVER', `GA4 Setup Wizard running on http://localhost:${PORT}`);
+    logger.info('SERVER', `Environment: ${process.env.NODE_ENV || 'development'}`);
+    logger.info('SERVER', `Debug mode: ${process.env.DEBUG === 'true' ? 'enabled' : 'disabled'}`);
+  });
+}
 
 module.exports = app;
