@@ -1981,14 +1981,15 @@ function generateSopChecklist(config) {
   return lines.join('\n');
 }
 
-// Serve React frontend
-app.use(express.static(path.join(__dirname, 'build')));
-
-app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    res.sendFile(path.join(__dirname, 'build', 'index.html'));
-  }
-});
+// Serve React frontend (local dev only — on Vercel, static files are served by @vercel/static-build)
+if (!isProduction) {
+  app.use(express.static(path.join(__dirname, 'build')));
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api')) {
+      res.sendFile(path.join(__dirname, 'build', 'index.html'));
+    }
+  });
+}
 
 // Error handler
 app.use((err, req, res, next) => {
