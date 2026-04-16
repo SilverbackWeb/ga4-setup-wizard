@@ -515,6 +515,7 @@ function WizardFlow({ initialSessionId, mode = 'create', projectId = null }) {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 sessionId: effectiveSessionId,
+                authTokens,
                 accountId: formData.gtmAccountId,
                 containerId: formData.gtmContainerId,
                 tagName: `GA4 – Event – ${trigger.triggerName}`,
@@ -566,6 +567,7 @@ function WizardFlow({ initialSessionId, mode = 'create', projectId = null }) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               sessionId: effectiveSessionId,
+              authTokens,
               accountId: formData.gtmAccountId,
               containerId: formData.gtmContainerId,
               tagName: 'GA4 – Config',
@@ -612,6 +614,7 @@ function WizardFlow({ initialSessionId, mode = 'create', projectId = null }) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               sessionId: effectiveSessionId,
+              authTokens,
               accountId: formData.gtmAccountId,
               containerId: formData.gtmContainerId,
               versionName: `GA4 Setup - ${formData.clientName} - ${new Date().toISOString().split('T')[0]}`

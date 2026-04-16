@@ -60,11 +60,13 @@ function ReviewCreate({ formData, sessionId, mode = 'create', editProject = null
 
     try {
       // Check for existing triggers
+      const authTokens = localStorage.getItem('authTokens');
       const response = await fetch('/api/gtm/check-triggers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId,
+          authTokens,
           accountId: formData.gtmAccountId,
           containerId: formData.gtmContainerId,
           triggerNames
