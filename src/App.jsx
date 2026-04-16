@@ -258,7 +258,9 @@ function WizardFlow({ initialSessionId, mode = 'create', projectId = null }) {
   const fetchUserInfo = async (session) => {
     try {
       setIsLoading(true);
-      const response = await fetch(`/api/auth/user/${session}`);
+      const authTokens = localStorage.getItem('authTokens');
+      const tokenParam = authTokens ? `?authTokens=${encodeURIComponent(authTokens)}` : '';
+      const response = await fetch(`/api/auth/user/${session}${tokenParam}`);
       if (response.status === 401) {
         // Session expired or invalid - clear it and show login screen
         console.warn('Session invalid or expired, clearing...');
@@ -341,6 +343,8 @@ function WizardFlow({ initialSessionId, mode = 'create', projectId = null }) {
       // Get sessionId from state first, fall back to localStorage if null
       const storedSessionId = localStorage.getItem('sessionId');
       const effectiveSessionId = sessionId || storedSessionId;
+      // Encoded OAuth tokens for stateless fallback across Vercel serverless instances
+      const authTokens = localStorage.getItem('authTokens');
 
       goToStep(5); // Go to Creating screen
       setIsLoading(true);
@@ -423,6 +427,7 @@ function WizardFlow({ initialSessionId, mode = 'create', projectId = null }) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   sessionId: effectiveSessionId,
+                  authTokens,
                   accountId: formData.gtmAccountId,
                   containerId: formData.gtmContainerId,
                   triggerName: config.name,
@@ -650,6 +655,7 @@ function WizardFlow({ initialSessionId, mode = 'create', projectId = null }) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   sessionId: effectiveSessionId,
+                  authTokens,
                   propertyId: formData.ga4PropertyId,
                   eventName
                 })
@@ -707,6 +713,7 @@ function WizardFlow({ initialSessionId, mode = 'create', projectId = null }) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   sessionId: effectiveSessionId,
+                  authTokens,
                   customerId: formData.googleAdsAccountId.replace(/-/g, ''),
                   conversionAction: {
                     name: `${formData.clientName} - ${eventNameMapping[eventType]}`,
@@ -1069,10 +1076,12 @@ function AuthCallbackHandler() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sessionId = params.get('session');
+    const tokens = params.get('tokens');
 
     if (sessionId) {
-      // Store sessionId in localStorage for WizardFlow to use
+      // Store sessionId and encoded tokens in localStorage for WizardFlow to use
       localStorage.setItem('sessionId', sessionId);
+      if (tokens) localStorage.setItem('authTokens', tokens);
       // Redirect to wizard with the session in URL
       window.location.href = `/wizard?session=${sessionId}`;
     } else {

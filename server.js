@@ -91,6 +91,28 @@ const sessions = {
   }
 };
 
+// Stateless session helper — tries in-memory store first, falls back to tokens passed in request body.
+// This makes the app work across Vercel serverless instances that don't share memory.
+function getSession(req) {
+  const sessionId = req.body?.sessionId || req.params?.sessionId;
+  if (sessionId) {
+    const inMemory = sessions.get(sessionId);
+    if (inMemory) return inMemory;
+  }
+  // Fallback: client passed base64-encoded tokens directly (stateless mode for Vercel serverless)
+  // Supports both POST body and GET query params
+  const authTokens = req.body?.authTokens || req.query?.authTokens;
+  if (authTokens) {
+    try {
+      const tokens = JSON.parse(Buffer.from(authTokens, 'base64').toString('utf8'));
+      return { tokens, createdAt: new Date(), userEmail: null };
+    } catch (e) {
+      console.error('Failed to decode authTokens:', e.message);
+    }
+  }
+  return null;
+}
+
 // Create logs directory if it doesn't exist (dev only — Vercel filesystem is read-only)
 const logsDir = process.env.LOG_DIR || './logs';
 if (!isProduction && !fs.existsSync(logsDir)) {
@@ -180,9 +202,12 @@ app.get('/api/auth/callback', async (req, res) => {
 
     logger.info('AUTH', `User authenticated: ${userInfo.data.email}`);
 
+    // Encode tokens for client-side storage (stateless fallback for Vercel serverless)
+    const encodedTokens = Buffer.from(JSON.stringify(tokens)).toString('base64');
+
     // Redirect to the correct port (use environment variable or default)
     const redirectHost = process.env.REDIRECT_HOST || `http://localhost:${process.env.PORT || 5001}`;
-    res.redirect(`${redirectHost}/auth-callback?session=${sessionId}`);
+    res.redirect(`${redirectHost}/auth-callback?session=${sessionId}&tokens=${encodedTokens}`);
   } catch (error) {
     logger.error('AUTH', 'OAuth callback failed', error.message);
     res.status(500).json({ error: 'Authentication failed' });
@@ -192,7 +217,7 @@ app.get('/api/auth/callback', async (req, res) => {
 // Get current user info
 app.get('/api/auth/user/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
@@ -312,7 +337,7 @@ function validateTriggerConfiguration(existingTrigger, triggerType, newFilterVal
 // Create GTM trigger
 app.post('/api/gtm/trigger', async (req, res) => {
   const { sessionId, accountId, containerId, triggerName, triggerType, filterParameter, filterType, filterValue } = req.body;
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
@@ -533,7 +558,7 @@ app.post('/api/gtm/trigger', async (req, res) => {
 // Create GA4 tag
 app.post('/api/gtm/tag', async (req, res) => {
   const { sessionId, accountId, containerId, tagName, measurementId, eventName, triggerIds } = req.body;
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
@@ -701,7 +726,7 @@ function withTimeout(promise, timeoutMs = 30000) {
 // Publish GTM version
 app.post('/api/gtm/publish', async (req, res) => {
   const { sessionId, accountId, containerId, versionName } = req.body;
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
@@ -870,7 +895,7 @@ app.post('/api/gtm/publish', async (req, res) => {
 // Mark event as key event in GA4
 app.post('/api/ga4/key-event', async (req, res) => {
   const { sessionId, propertyId, eventName } = req.body;
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
@@ -928,7 +953,7 @@ app.post('/api/ga4/key-event', async (req, res) => {
 // Check for existing GTM triggers (duplicate detection)
 app.post('/api/gtm/check-triggers', async (req, res) => {
   const { sessionId, accountId, containerId, triggerNames } = req.body;
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
@@ -1012,7 +1037,7 @@ app.post('/api/gtm/check-triggers', async (req, res) => {
 // Validate GTM setup (triggers, tags, and associations)
 app.post('/api/gtm/validate-setup', async (req, res) => {
   const { sessionId, accountId, containerId, triggerIds, tagIds } = req.body;
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
@@ -1167,7 +1192,7 @@ app.post('/api/gtm/validate-setup', async (req, res) => {
 // Get GA4 events list
 app.get('/api/ga4/events/:sessionId/:propertyId', async (req, res) => {
   const { sessionId, propertyId } = req.params;
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
@@ -1640,7 +1665,7 @@ app.delete('/api/projects/:projectId', (req, res) => {
 // Get live event performance data from GA4
 app.post('/api/ga4/events/performance', async (req, res) => {
   const { sessionId, propertyId, eventNames, startDate, endDate } = req.body;
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
@@ -1709,7 +1734,7 @@ app.post('/api/ga4/events/performance', async (req, res) => {
 // Get event performance summary (totals only)
 app.post('/api/ga4/events/summary', async (req, res) => {
   const { sessionId, propertyId, eventNames, startDate, endDate } = req.body;
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     return res.status(401).json({ error: 'Invalid or expired session' });
@@ -1777,7 +1802,7 @@ app.post('/api/google-ads/conversion-action', async (req, res) => {
   logger.info('GOOGLE_ADS', `Customer ID: ${customerId}`);
   logger.info('GOOGLE_ADS', `Conversion action: ${conversionAction?.name}`);
 
-  const session = sessions.get(sessionId);
+  const session = getSession(req);
 
   if (!session) {
     logger.error('GOOGLE_ADS', `No session found for sessionId: ${sessionId}`);
